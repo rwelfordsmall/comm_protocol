@@ -15,8 +15,8 @@ Behaviour
     Subscribes to /lora_rx_hb (std_msgs/String carrying raw JSON).
     The lora_receiver_node dispatches inbound heartbeats here.
     If no heartbeat is received within `timeout_sec` (default 30 s),
-    the node publishes 'ESTOP' to /robot_state to trigger the
-    spotmicro state_manager emergency stop.
+    the node publishes True to /estop to trigger the state_manager
+    emergency stop.
 
   Recovery:
     Once ESTOP is fired, the node continues monitoring. When a
@@ -46,7 +46,7 @@ Subscribed topics
 Published topics
 ────────────────
   /lora_tx_json  (std_msgs/String)  – outbound JSON envelope to sender
-  /robot_state   (std_msgs/String)  – 'ESTOP' on watchdog timeout
+  /estop         (std_msgs/Bool)    – True on watchdog timeout → state_manager ESTOP
 
 Run
 ───
@@ -59,7 +59,7 @@ import time
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String, Bool
 
 
 class HeartbeatNode(Node):
@@ -77,22 +77,21 @@ class HeartbeatNode(Node):
         self._timeout_sec = self.get_parameter('timeout_sec').get_parameter_value().double_value
 
         # ── State ────────────────────────────────────────────────────
-        self._tx_seq          = 0
-        self._last_rx_time    = time.monotonic()   # initialise to now so we don't
-                                                    # immediately ESTOP on startup
-        self._estop_fired     = False
-        self._link_was_lost   = False              # track for recovery logging
+        self._tx_seq        = 0
+        self._last_rx_time  = time.monotonic()  # init to now — no ESTOP on startup
+        self._estop_fired   = False
+        self._link_was_lost = False             # track for recovery logging
 
         # ── Publishers ───────────────────────────────────────────────
         self._pub_tx    = self.create_publisher(String, '/lora_tx_json', 10)
-        self._pub_state = self.create_publisher(String, '/robot_state',  10)
+        self._pub_estop = self.create_publisher(Bool,   '/estop',        10)
 
         # ── Subscriptions ────────────────────────────────────────────
         self._sub_hb = self.create_subscription(
             String, '/lora_rx_hb', self._on_heartbeat_rx, 10)
 
         # ── Timers ───────────────────────────────────────────────────
-        self._tx_timer      = self.create_timer(1.0 / hb_hz, self._tx_heartbeat)
+        self._tx_timer       = self.create_timer(1.0 / hb_hz, self._tx_heartbeat)
         self._watchdog_timer = self.create_timer(1.0,          self._check_watchdog)
 
         self.get_logger().info(
@@ -136,17 +135,15 @@ class HeartbeatNode(Node):
                 f'LoRa link RESTORED — received heartbeat from [{sender}] '
                 f'seq={seq}. ESTOP must be cleared manually via controller.')
             self._link_was_lost = False
-            self._estop_fired   = False   # allow re-arming watchdog for next dropout
+            self._estop_fired   = False  # re-arm watchdog for next dropout
 
-        self.get_logger().debug(
-            f'HB RX from [{sender}] seq={seq} ts={ts:.3f}')
+        self.get_logger().debug(f'HB RX from [{sender}] seq={seq} ts={ts:.3f}')
 
     # ── Watchdog: check timeout every second ─────────────────────────
 
     def _check_watchdog(self):
         elapsed = time.monotonic() - self._last_rx_time
 
-        # Log a warning at 10s and 20s to give early notice
         if not self._estop_fired:
             if elapsed >= 20.0:
                 self.get_logger().warn(
@@ -160,18 +157,18 @@ class HeartbeatNode(Node):
             self._fire_estop(elapsed)
 
     def _fire_estop(self, elapsed: float):
-        """Publish ESTOP to /robot_state and flag so we only fire once per dropout."""
+        """Publish True to /estop and flag so we only fire once per dropout."""
         self._estop_fired   = True
         self._link_was_lost = True
 
         self.get_logger().error(
             f'LoRa heartbeat lost for {elapsed:.1f}s — firing ESTOP!')
 
-        estop_msg = String()
-        estop_msg.data = 'ESTOP'
-        self._pub_state.publish(estop_msg)
+        estop_msg = Bool()
+        estop_msg.data = True
+        self._pub_estop.publish(estop_msg)
 
-        # Also send an ESTOP command over LoRa in case the other side is still alive
+        # Also propagate ESTOP over LoRa in case the other side is still alive
         envelope = {
             'msg_type': 'robot_state',
             'sender':   self._sender_id,

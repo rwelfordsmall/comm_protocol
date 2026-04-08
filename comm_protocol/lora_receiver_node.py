@@ -1,23 +1,90 @@
+"""
+lora_receiver_node.py
+────────────────────────────────────────────────────────────────────
+ROS2 node: lora_receiver
+
+Reads newline-terminated JSON envelopes from the USB LoRa dongle and
+dispatches them to the appropriate ROS2 topics based on msg_type.
+
+JSON Envelope Format
+────────────────────
+{
+    "msg_type": "heartbeat" | "cmd_vel" | "robot_state" | "body_pose" | "joy" | "goal_pose",
+    "sender":   "base" | "robot",
+    "ts":       <unix timestamp float>,
+    "payload":  { ... }
+}
+
+Dispatch table (_WHITELIST)
+───────────────────────────
+  heartbeat    → /lora_rx_hb    (std_msgs/String)              raw JSON for heartbeat_node
+  cmd_vel      → /gait_command  (geometry_msgs/Twist)
+  robot_state  → /estop         (std_msgs/Bool)                True if payload state == 'ESTOP'
+  body_pose    → /body_pose     (geometry_msgs/Vector3)
+  joy          → /joy_raw       (sensor_msgs/Joy)              Xbox controller from base station
+  goal_pose    → /goal_pose     (geometry_msgs/PoseStamped)    Nav2 goal from base station RViz
+
+Notes
+─────
+  robot_state / ESTOP:
+    Inbound robot_state envelopes map directly to /estop (Bool). state_manager
+    subscribes to /estop as its authoritative external ESTOP input, avoiding
+    the race condition of publishing to /robot_state which state_manager only
+    publishes to (never subscribes to).
+
+  joy dispatch:
+    Inbound Joy messages land on /joy_raw so they flow through the existing
+    controller_node watchdog before reaching state_manager. This preserves
+    the safety timeout behaviour identically to a locally connected controller.
+
+  goal_pose dispatch:
+    Inbound goal poses land on /goal_pose — the same topic RViz's "Nav2 Goal"
+    tool publishes to. Nav2 bt_navigator picks this up directly. The robot must
+    be in AUTONOMOUS state with Nav2 running for goals to execute.
+
+ROS2 Parameters
+───────────────
+  serial_port   (string)  – default '/dev/ttyUSB1'
+  baud_rate     (int)     – default 115200
+
+Published topics
+────────────────
+  /lora_rx          (std_msgs/String)              – raw RX line (debug/monitoring)
+  /lora_rx_hb       (std_msgs/String)              – heartbeat JSON for heartbeat_node
+  /gait_command     (geometry_msgs/Twist)          – velocity commands from base station
+  /estop            (std_msgs/Bool)                – True when ESTOP received over LoRa
+  /body_pose        (geometry_msgs/Vector3)        – body orientation commands
+  /joy_raw          (sensor_msgs/Joy)              – controller input from base station
+  /goal_pose        (geometry_msgs/PoseStamped)    – Nav2 goal from base station
+
+Run
+───
+  ros2 run comm_protocol lora_receiver
+  ros2 run comm_protocol lora_receiver --ros-args -p serial_port:=/dev/ttyUSB0
+"""
+
 import json
 import threading
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
-from geometry_msgs.msg import Twist, Vector3
+from std_msgs.msg import String, Bool
+from geometry_msgs.msg import Twist, Vector3, PoseStamped
+from sensor_msgs.msg import Joy
 
 import serial
 import serial.tools.list_ports
 
 
-# Whitelist:
-# Maps msg_type → (topic, publisher_attr_name)
+# Whitelist: maps msg_type → (topic, ros_msg_type)
 # Publishers are created dynamically in __init__ from this table.
 _WHITELIST = {
-    'heartbeat':   ('/lora_rx_hb',     String),
-    'cmd_vel':     ('/gait_command',    Twist),
-    'robot_state': ('/robot_state',     String),
-    'body_pose':   ('/body_pose',       Vector3),
+    'heartbeat':   ('/lora_rx_hb',   String),
+    'cmd_vel':     ('/gait_command',  Twist),
+    'robot_state': ('/estop',         Bool),
+    'body_pose':   ('/body_pose',     Vector3),
+    'joy':         ('/joy_raw',       Joy),
+    'goal_pose':   ('/goal_pose',     PoseStamped),
 }
 
 
@@ -26,16 +93,15 @@ class LoraReceiverNode(Node):
     def __init__(self):
         super().__init__('lora_receiver')
 
-        # Parameters, baselined to USB1 and 115200 baude rate (usb dongle configured to it, initially 9600)
+        # ── Parameters ───────────────────────────────────────────────
         self.declare_parameter('serial_port', '/dev/ttyUSB1')
         self.declare_parameter('baud_rate',   115200)
 
-        # If commandline args
         port = self.get_parameter('serial_port').get_parameter_value().string_value
         baud = self.get_parameter('baud_rate').get_parameter_value().integer_value
 
-        # The Publisher
-        # Allows for debugging/monitoring topics — all received lines come through
+        # ── Publishers ───────────────────────────────────────────────
+        # Raw line — always published for monitoring/debugging
         self._pub_raw = self.create_publisher(String, '/lora_rx', 10)
 
         # Whitelist publishers keyed by msg_type
@@ -44,24 +110,23 @@ class LoraReceiverNode(Node):
             self._publishers[msg_type] = self.create_publisher(ros_type, topic, 10)
             self.get_logger().info(f'Whitelisted [{msg_type}] → {topic}')
 
-        # Serial port stuff
-        self._ser = None
+        # ── Serial ───────────────────────────────────────────────────
+        self._ser         = None
         self._read_thread = None
-        self._stop_event = threading.Event()
+        self._stop_event  = threading.Event()
 
         try:
             self._ser = serial.Serial(port, baud, timeout=1.0)
             self.get_logger().info(f'Opened serial port {port} @ {baud} baud')
             self._start_read_thread()
         except serial.SerialException as e:
-            # Debugging info
             self.get_logger().error(f'Failed to open serial port {port}: {e}')
             self.get_logger().error('Available ports: ' + self._list_ports())
 
         self.get_logger().info('lora_receiver ready')
 
+    # ── Read thread ──────────────────────────────────────────────────
 
-    # Read thread 
     def _start_read_thread(self):
         self._read_thread = threading.Thread(
             target=self._read_loop, daemon=True)
@@ -85,7 +150,7 @@ class LoraReceiverNode(Node):
                 raw_msg = String()
                 raw_msg.data = text
                 self._pub_raw.publish(raw_msg)
-                self.get_logger().info(f'RX <- LoRa: {text}')
+                self.get_logger().debug(f'RX <- LoRa: {text}')
 
                 # Attempt JSON parse
                 try:
@@ -129,15 +194,16 @@ class LoraReceiverNode(Node):
             return
 
         publisher.publish(ros_msg)
-        self.get_logger().info(
+        self.get_logger().debug(
             f'Dispatched [{msg_type}] → {_WHITELIST[msg_type][0]}')
 
-    # Builds 
+    # ── Message builders ─────────────────────────────────────────────
+
     def _build_ros_msg(self, msg_type: str, payload: dict, raw_text: str):
         """Construct the appropriate ROS2 message from the JSON payload."""
 
         if msg_type == 'heartbeat':
-            # Forward raw JSON string to heartbeat_node for timestamp inspection
+            # Forward raw JSON string to heartbeat_node for watchdog update
             msg = String()
             msg.data = raw_text
             return msg
@@ -155,8 +221,10 @@ class LoraReceiverNode(Node):
             return msg
 
         elif msg_type == 'robot_state':
-            msg = String()
-            msg.data = str(payload.get('state', ''))
+            # Map ESTOP state string → Bool on /estop (state_manager's subscribed input)
+            state = str(payload.get('state', ''))
+            msg = Bool()
+            msg.data = (state == 'ESTOP')
             return msg
 
         elif msg_type == 'body_pose':
@@ -166,17 +234,42 @@ class LoraReceiverNode(Node):
             msg.z = float(payload.get('yaw',   0.0))
             return msg
 
+        elif msg_type == 'joy':
+            msg = Joy()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.axes    = [float(a) for a in payload.get('axes',    [])]
+            msg.buttons = [int(b)   for b in payload.get('buttons', [])]
+            return msg
+
+        elif msg_type == 'goal_pose':
+            msg = PoseStamped()
+            msg.header.stamp    = self.get_clock().now().to_msg()
+            msg.header.frame_id = payload.get('frame_id', 'map')
+            pos = payload.get('position', {})
+            ori = payload.get('orientation', {})
+            msg.pose.position.x    = float(pos.get('x', 0.0))
+            msg.pose.position.y    = float(pos.get('y', 0.0))
+            msg.pose.position.z    = float(pos.get('z', 0.0))
+            msg.pose.orientation.x = float(ori.get('x', 0.0))
+            msg.pose.orientation.y = float(ori.get('y', 0.0))
+            msg.pose.orientation.z = float(ori.get('z', 0.0))
+            msg.pose.orientation.w = float(ori.get('w', 1.0))
+            self.get_logger().info(
+                f'GOAL RX | frame={msg.header.frame_id} '
+                f'pos=({msg.pose.position.x:.2f}, '
+                f'{msg.pose.position.y:.2f}, '
+                f'{msg.pose.position.z:.2f})')
+            return msg
+
         raise ValueError(f'Message type undefined, no builder: "{msg_type}"')
 
-    # Helpers
+    # ── Helpers ──────────────────────────────────────────────────────
 
     @staticmethod
-    # Specifically to find port in case can't connect, just to help user debug
     def _list_ports() -> str:
         ports = serial.tools.list_ports.comports()
         return ', '.join(p.device for p in ports) if ports else '(none found)'
 
-    # Ensures a clean shutdown
     def destroy_node(self):
         self._stop_event.set()
         if self._ser and self._ser.is_open:
@@ -187,7 +280,8 @@ class LoraReceiverNode(Node):
         super().destroy_node()
 
 
-# Entry point
+# ── Entry point ──────────────────────────────────────────────────────
+
 def main(args=None):
     rclpy.init(args=args)
     node = LoraReceiverNode()

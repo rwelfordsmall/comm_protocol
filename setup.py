@@ -27,6 +27,8 @@ setup(
             'lora_sender   = comm_protocol.lora_sender_node:main',
             'lora_receiver   = comm_protocol.lora_receiver_node:main',
             'heartbeat_node = comm_protocol.heartbeat_node:main',
+            'joy_bridge_node = comm_protocol.joy_bridge_node:main',
+            'goal_bridge_node = comm_protocol.goal_bridge_node:main',
         ],
     },
 )

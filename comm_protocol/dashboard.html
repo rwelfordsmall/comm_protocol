@@ -1,0 +1,934 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QuadOps — Operator Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Syne:wght@400;600;700&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/roslib/1.3.0/roslib.min.js"></script>
+
+  <style>
+    :root {
+      --bg:          #0d0f0e;
+      --surface:     #141716;
+      --surface2:    #1c1f1d;
+      --border:      #2a2f2c;
+      --border2:     #3a3f3c;
+      --amber:       #EF9F27;
+      --amber-dim:   #854F0B;
+      --amber-glow:  rgba(239,159,39,0.12);
+      --green:       #639922;
+      --green-bright:#97C459;
+      --red:         #E24B4A;
+      --red-dim:     #501313;
+      --red-glow:    rgba(226,75,74,0.18);
+      --text:        #d4cfc8;
+      --text-dim:    #6e7570;
+      --text-bright: #edeae4;
+      --mono:        'JetBrains Mono', monospace;
+      --sans:        'Syne', sans-serif;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html, body {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--mono);
+      font-size: 13px;
+      overflow: hidden;
+    }
+
+    /* ── Layout ─────────────────────────────────────────────────── */
+
+    .dash-root {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    .topbar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    .topbar-left  { display: flex; align-items: center; gap: 16px; }
+    .topbar-right { display: flex; align-items: center; gap: 10px; }
+
+    .logo {
+      font-family: var(--sans);
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-bright);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .logo span { color: var(--amber); }
+
+    .conn-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-dim);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 3px 8px;
+    }
+
+    .conn-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--red);
+      transition: background 0.3s;
+    }
+    .conn-dot.connected { background: var(--green-bright); }
+
+    .ts-display { font-size: 11px; color: var(--text-dim); }
+
+    /* Main 3-column grid */
+    .main-grid {
+      display: grid;
+      grid-template-columns: 260px 1fr 260px;
+      grid-template-rows: 1fr auto;
+      gap: 1px;
+      background: var(--border);
+      flex: 1;
+      min-height: 0;
+    }
+
+    .panel {
+      background: var(--bg);
+      padding: 16px;
+      overflow-y: auto;
+    }
+
+    /* ── Common components ─────────────────────────────────────── */
+
+    .panel-title {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .panel-title::before {
+      content: '';
+      display: inline-block;
+      width: 2px; height: 10px;
+      background: var(--amber);
+      border-radius: 1px;
+    }
+
+    .divider { height: 1px; background: var(--border); margin: 12px 0; }
+
+    /* ── Left panel ─────────────────────────────────────────────── */
+
+    .state-display {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 14px 16px;
+      margin-bottom: 12px;
+    }
+    .state-label {
+      font-size: 10px; color: var(--text-dim);
+      letter-spacing: 0.1em; text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    .state-value {
+      font-family: var(--sans);
+      font-size: 28px; font-weight: 700;
+      color: var(--amber); letter-spacing: 0.04em;
+      transition: color 0.2s;
+    }
+    .state-value.estop    { color: var(--red); }
+    .state-value.walking  { color: var(--green-bright); }
+    .state-value.sitting  { color: var(--text-dim); }
+    .state-value.idle     { color: var(--text-dim); }
+    .state-value.standing { color: var(--amber); }
+
+    .hb-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin-bottom: 8px;
+    }
+    .hb-label {
+      font-size: 10px; color: var(--text-dim);
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    .hb-value { font-size: 13px; color: var(--amber); font-weight: 500; transition: color 0.2s; }
+    .hb-value.ok     { color: var(--green-bright); }
+    .hb-value.warn   { color: var(--amber); }
+    .hb-value.danger { color: var(--red); }
+
+    .estop-btn {
+      width: 100%;
+      padding: 14px;
+      background: var(--red-dim);
+      border: 2px solid var(--red);
+      border-radius: 6px;
+      color: var(--red);
+      font-family: var(--sans);
+      font-size: 14px; font-weight: 700;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      cursor: pointer;
+      margin-top: 14px;
+      transition: background 0.1s;
+    }
+    .estop-btn:hover  { background: rgba(226,75,74,0.28); }
+    .estop-btn:active { background: rgba(226,75,74,0.45); transform: scale(0.99); }
+
+    .clear-btn {
+      width: 100%;
+      padding: 10px;
+      background: transparent;
+      border: 1px solid var(--border2);
+      border-radius: 6px;
+      color: var(--text-dim);
+      font-family: var(--mono);
+      font-size: 12px; letter-spacing: 0.06em;
+      cursor: pointer;
+      margin-top: 8px;
+      transition: all 0.1s;
+    }
+    .clear-btn:hover { border-color: var(--amber-dim); color: var(--amber); }
+
+    /* Connection form */
+    .conn-form {
+      display: flex; gap: 8px;
+      margin-bottom: 14px;
+      align-items: center;
+    }
+    .conn-input {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 6px 10px;
+      color: var(--text-bright);
+      font-family: var(--mono);
+      font-size: 12px;
+      outline: none;
+    }
+    .conn-input:focus { border-color: var(--amber-dim); }
+
+    .conn-btn {
+      padding: 6px 14px;
+      background: transparent;
+      border: 1px solid var(--border2);
+      border-radius: 4px;
+      color: var(--text-dim);
+      font-family: var(--mono);
+      font-size: 11px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.1s;
+    }
+    .conn-btn:hover        { border-color: var(--amber-dim); color: var(--amber); }
+    .conn-btn.disconnecting { border-color: var(--red); color: var(--red); }
+
+    /* Topic indicators */
+    .topic-row {
+      display: flex; align-items: center;
+      justify-content: space-between;
+      padding: 5px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .topic-name { font-size: 11px; color: var(--text-dim); }
+    .topic-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--border2);
+      transition: background 0.1s;
+    }
+    .topic-dot.active { background: var(--green-bright); }
+
+    /* ── Centre panel ───────────────────────────────────────────── */
+
+    .joystick-area {
+      display: flex; flex-direction: column;
+      align-items: center; gap: 20px;
+      padding-top: 8px;
+    }
+
+    .joystick-label {
+      font-size: 10px; color: var(--text-dim);
+      letter-spacing: 0.08em; text-transform: uppercase;
+      text-align: center; margin-bottom: 8px;
+    }
+
+    .joystick-bg {
+      width: 160px; height: 160px;
+      border-radius: 50%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      position: relative;
+      cursor: crosshair;
+      user-select: none;
+    }
+    .joystick-crosshair-h {
+      position: absolute;
+      top: 50%; left: 10%; width: 80%; height: 1px;
+      background: var(--border2); transform: translateY(-50%);
+    }
+    .joystick-crosshair-v {
+      position: absolute;
+      left: 50%; top: 10%; height: 80%; width: 1px;
+      background: var(--border2); transform: translateX(-50%);
+    }
+    .joystick-thumb {
+      position: absolute;
+      width: 36px; height: 36px;
+      border-radius: 50%;
+      background: var(--surface2);
+      border: 2px solid var(--amber);
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+
+    .vel-readouts {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 6px; width: 100%; max-width: 280px;
+    }
+    .vel-box {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 4px; padding: 8px; text-align: center;
+    }
+    .vel-box-label {
+      font-size: 9px; color: var(--text-dim);
+      letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 4px;
+    }
+    .vel-box-value { font-size: 14px; color: var(--amber); font-weight: 500; }
+
+    /* Shared send button */
+    .send-btn {
+      width: 100%;
+      padding: 10px;
+      background: var(--amber-glow);
+      border: 1px solid var(--amber-dim);
+      border-radius: 6px;
+      color: var(--amber);
+      font-family: var(--mono);
+      font-size: 12px; font-weight: 500;
+      letter-spacing: 0.06em;
+      cursor: pointer;
+      transition: all 0.1s;
+    }
+    .send-btn:hover   { background: rgba(239,159,39,0.2); border-color: var(--amber); }
+    .send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+    .send-btn.muted {
+      background: transparent;
+      color: var(--text-dim);
+      border-color: var(--border);
+    }
+    .send-btn.muted:hover { border-color: var(--border2); color: var(--text); }
+
+    /* ── Right panel ────────────────────────────────────────────── */
+
+    .slider-row { margin-bottom: 12px; }
+    .slider-header {
+      display: flex; justify-content: space-between;
+      margin-bottom: 6px;
+    }
+    .slider-name {
+      font-size: 10px; color: var(--text-dim);
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    .slider-val { font-size: 11px; color: var(--amber); }
+
+    input[type=range] {
+      width: 100%;
+      -webkit-appearance: none;
+      height: 4px;
+      border-radius: 2px;
+      background: var(--surface2);
+      outline: none;
+      cursor: pointer;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--amber);
+      border: 2px solid var(--bg);
+      cursor: pointer;
+    }
+    input[type=range]::-moz-range-thumb {
+      width: 16px; height: 16px;
+      border-radius: 50%;
+      background: var(--amber);
+      border: 2px solid var(--bg);
+      cursor: pointer;
+    }
+
+    /* LoRa raw feed */
+    #lora-raw {
+      font-size: 10px;
+      color: var(--text-dim);
+      line-height: 1.9;
+      word-break: break-all;
+      max-height: 130px;
+      overflow-y: auto;
+    }
+
+    /* ── Log panel ─────────────────────────────────────────────── */
+
+    .log-panel {
+      grid-column: 1 / -1;
+      background: var(--bg);
+      border-top: 1px solid var(--border);
+      padding: 10px 16px;
+      overflow-y: auto;
+      max-height: 130px;
+    }
+
+    .log-entry {
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.8;
+      display: flex; gap: 12px;
+    }
+    .log-ts  { color: var(--border2); min-width: 88px; flex-shrink: 0; }
+    .log-msg { color: var(--text); }
+    .log-msg.err  { color: var(--red); }
+    .log-msg.ok   { color: var(--green-bright); }
+    .log-msg.warn { color: var(--amber); }
+  </style>
+</head>
+
+<body>
+<div class="dash-root">
+
+  <!-- ── Top bar ──────────────────────────────────────────────── -->
+  <div class="topbar">
+    <div class="topbar-left">
+      <div class="logo">QUAD<span>OPS</span></div>
+      <div class="conn-badge">
+        <div class="conn-dot" id="main-dot"></div>
+        <span id="conn-status-text">disconnected</span>
+      </div>
+    </div>
+    <div class="topbar-right">
+      <span class="ts-display" id="clock">--:--:--</span>
+    </div>
+  </div>
+
+  <!-- ── Main grid ────────────────────────────────────────────── -->
+  <div class="main-grid">
+
+    <!-- LEFT: Status + connection ──────────────────────────────── -->
+    <div class="panel">
+      <div class="panel-title">Robot Status</div>
+
+      <div class="state-display">
+        <div class="state-label">Current State</div>
+        <div class="state-value idle" id="state-display">IDLE</div>
+      </div>
+
+      <div class="hb-row">
+        <div class="hb-label">Heartbeat</div>
+        <div class="hb-value warn" id="hb-status">NO LINK</div>
+      </div>
+      <div class="hb-row">
+        <div class="hb-label">Last RX</div>
+        <div class="hb-value" id="hb-last-rx">--</div>
+      </div>
+      <div class="hb-row">
+        <div class="hb-label">TX Seq</div>
+        <div class="hb-value" id="hb-seq">0</div>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="panel-title">Rosbridge</div>
+      <div class="conn-form">
+        <input class="conn-input" id="rb-url" value="ws://localhost:9090" />
+        <button class="conn-btn" id="conn-btn" onclick="toggleConnection()">Connect</button>
+      </div>
+
+      <div class="topic-row">
+        <span class="topic-name">/robot_state</span>
+        <div class="topic-dot" id="dot-robot-state"></div>
+      </div>
+      <div class="topic-row">
+        <span class="topic-name">/lora_rx_hb</span>
+        <div class="topic-dot" id="dot-lora-hb"></div>
+      </div>
+      <div class="topic-row">
+        <span class="topic-name">/gait_command</span>
+        <div class="topic-dot" id="dot-gait-cmd"></div>
+      </div>
+      <div class="topic-row">
+        <span class="topic-name">/body_pose</span>
+        <div class="topic-dot" id="dot-body-pose"></div>
+      </div>
+
+      <button class="estop-btn" onclick="fireEstop()">&#9632; E-STOP</button>
+      <button class="clear-btn" onclick="clearEstop()">Clear E-Stop &rarr; Sitting</button>
+    </div>
+
+    <!-- CENTRE: cmd_vel joystick ───────────────────────────────── -->
+    <div class="panel">
+      <div class="panel-title">Velocity Command &nbsp;&middot;&nbsp; /gait_command</div>
+
+      <div class="joystick-area">
+        <!-- XY joystick -->
+        <div>
+          <div class="joystick-label">Forward / Strafe</div>
+          <div class="joystick-bg" id="joy-xy"
+               onmousedown="startJoy(event,'xy')"
+               ontouchstart="startJoy(event,'xy')">
+            <div class="joystick-crosshair-h"></div>
+            <div class="joystick-crosshair-v"></div>
+            <div class="joystick-thumb" id="joy-xy-thumb"></div>
+          </div>
+        </div>
+
+        <!-- Yaw bar -->
+        <div>
+          <div class="joystick-label">Yaw (Turn)</div>
+          <div class="joystick-bg" id="joy-yaw"
+               style="width:200px;height:48px;border-radius:24px;"
+               onmousedown="startJoy(event,'yaw')"
+               ontouchstart="startJoy(event,'yaw')">
+            <div class="joystick-crosshair-v" style="top:10%;height:80%;"></div>
+            <div class="joystick-thumb" id="joy-yaw-thumb"
+                 style="width:28px;height:28px;"></div>
+          </div>
+        </div>
+
+        <!-- Velocity readouts -->
+        <div class="vel-readouts">
+          <div class="vel-box">
+            <div class="vel-box-label">Vx m/s</div>
+            <div class="vel-box-value" id="vx-out">0.00</div>
+          </div>
+          <div class="vel-box">
+            <div class="vel-box-label">Vy m/s</div>
+            <div class="vel-box-value" id="vy-out">0.00</div>
+          </div>
+          <div class="vel-box">
+            <div class="vel-box-label">Yaw r/s</div>
+            <div class="vel-box-value" id="yaw-out">0.00</div>
+          </div>
+        </div>
+
+        <button class="send-btn" id="send-cmd-btn"
+                onclick="sendCmdVel()" disabled>
+          Publish &rarr; /gait_command
+        </button>
+        <button class="send-btn muted" onclick="zeroVel()">
+          Zero velocity
+        </button>
+      </div>
+    </div>
+
+    <!-- RIGHT: Body pose + LoRa raw ─────────────────────────────── -->
+    <div class="panel">
+      <div class="panel-title">Body Pose &nbsp;&middot;&nbsp; /body_pose</div>
+
+      <div class="slider-row">
+        <div class="slider-header">
+          <span class="slider-name">Roll</span>
+          <span class="slider-val" id="roll-val">0°</span>
+        </div>
+        <input type="range" min="-30" max="30" value="0" step="1"
+               id="roll-slider"
+               oninput="document.getElementById('roll-val').textContent=this.value+'°'">
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-header">
+          <span class="slider-name">Pitch</span>
+          <span class="slider-val" id="pitch-val">0°</span>
+        </div>
+        <input type="range" min="-30" max="30" value="0" step="1"
+               id="pitch-slider"
+               oninput="document.getElementById('pitch-val').textContent=this.value+'°'">
+      </div>
+
+      <div class="slider-row">
+        <div class="slider-header">
+          <span class="slider-name">Yaw</span>
+          <span class="slider-val" id="yaw-pose-val">0°</span>
+        </div>
+        <input type="range" min="-30" max="30" value="0" step="1"
+               id="yaw-slider"
+               oninput="document.getElementById('yaw-pose-val').textContent=this.value+'°'">
+      </div>
+
+      <button class="send-btn" id="send-pose-btn"
+              onclick="sendBodyPose()" disabled style="margin-top:8px;">
+        Publish &rarr; /body_pose
+      </button>
+      <button class="send-btn muted" onclick="zeroPose()" style="margin-top:6px;">
+        Zero pose
+      </button>
+
+      <div class="divider"></div>
+
+      <div class="panel-title">LoRa Raw &nbsp;&middot;&nbsp; /lora_rx</div>
+      <div id="lora-raw">Waiting for data...</div>
+    </div>
+
+    <!-- BOTTOM: Event log ─────────────────────────────────────── -->
+    <div class="log-panel">
+      <div class="panel-title" style="margin-bottom:8px;">Event Log</div>
+      <div id="log-container"></div>
+    </div>
+
+  </div><!-- /main-grid -->
+</div><!-- /dash-root -->
+
+<script>
+  /* ── State ───────────────────────────────────────────────────── */
+  var ros       = null;
+  var connected = false;
+  var pubs      = {};
+
+  var vx = 0, vy = 0, yawVel = 0;
+  var lastHbTime   = null;
+  var hbSeq        = 0;
+  var hbTimeoutId  = null;
+
+  /* ── Clock ───────────────────────────────────────────────────── */
+  function updateClock() {
+    document.getElementById('clock').textContent =
+      new Date().toTimeString().slice(0, 8);
+  }
+  setInterval(updateClock, 1000);
+  updateClock();
+
+  /* ── Logging ─────────────────────────────────────────────────── */
+  function log(msg, cls) {
+    var c   = document.getElementById('log-container');
+    var now = new Date();
+    var ts  = now.toTimeString().slice(0, 8) + '.'
+            + String(now.getMilliseconds()).padStart(3, '0');
+    var d   = document.createElement('div');
+    d.className = 'log-entry';
+    d.innerHTML =
+      '<span class="log-ts">' + ts + '</span>'
+      + '<span class="log-msg ' + (cls || '') + '">' + msg + '</span>';
+    c.prepend(d);
+    if (c.children.length > 100) c.removeChild(c.lastChild);
+  }
+
+  /* ── Topic dot flash ─────────────────────────────────────────── */
+  function flashDot(id, durationMs) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    el.classList.add('active');
+    setTimeout(function () { el.classList.remove('active'); },
+               durationMs || 500);
+  }
+
+  /* ── Connection ──────────────────────────────────────────────── */
+  function toggleConnection() {
+    if (connected) { disconnect(); } else { connect(); }
+  }
+
+  function connect() {
+    var url = document.getElementById('rb-url').value.trim();
+    log('Connecting to ' + url + ' …', 'warn');
+
+    ros = new ROSLIB.Ros({ url: url });
+
+    ros.on('connection', function () {
+      connected = true;
+      document.getElementById('main-dot').classList.add('connected');
+      document.getElementById('conn-status-text').textContent = 'connected';
+      document.getElementById('conn-btn').textContent = 'Disconnect';
+      document.getElementById('conn-btn').classList.add('disconnecting');
+      document.getElementById('send-cmd-btn').disabled  = false;
+      document.getElementById('send-pose-btn').disabled = false;
+      log('Rosbridge connected', 'ok');
+      setupTopics();
+      startHbWatchdog();
+    });
+
+    ros.on('error', function (e) {
+      log('Connection error: ' + e, 'err');
+    });
+
+    ros.on('close', function () {
+      connected = false;
+      document.getElementById('main-dot').classList.remove('connected');
+      document.getElementById('conn-status-text').textContent = 'disconnected';
+      document.getElementById('conn-btn').textContent = 'Connect';
+      document.getElementById('conn-btn').classList.remove('disconnecting');
+      document.getElementById('send-cmd-btn').disabled  = true;
+      document.getElementById('send-pose-btn').disabled = true;
+      ['dot-robot-state','dot-lora-hb','dot-gait-cmd','dot-body-pose']
+        .forEach(function (id) {
+          document.getElementById(id).classList.remove('active');
+        });
+      pubs = {};
+      stopHbWatchdog();
+      log('Rosbridge disconnected', 'warn');
+    });
+  }
+
+  function disconnect() {
+    if (ros) ros.close();
+  }
+
+  /* ── Topic setup ─────────────────────────────────────────────── */
+  function setupTopics() {
+
+    /* /robot_state subscriber */
+    var robotStateSub = new ROSLIB.Topic({
+      ros: ros, name: '/robot_state',
+      messageType: 'std_msgs/String'
+    });
+    robotStateSub.subscribe(function (msg) {
+      flashDot('dot-robot-state', 800);
+      var s  = msg.data.toUpperCase();
+      var el = document.getElementById('state-display');
+      el.textContent  = s;
+      el.className    = 'state-value ' + s.toLowerCase();
+      log('robot_state &rarr; ' + s, s === 'ESTOP' ? 'err' : '');
+    });
+
+    /* /lora_rx_hb subscriber */
+    var hbSub = new ROSLIB.Topic({
+      ros: ros, name: '/lora_rx_hb',
+      messageType: 'std_msgs/String'
+    });
+    hbSub.subscribe(function (msg) {
+      flashDot('dot-lora-hb', 600);
+      lastHbTime = Date.now();
+      try {
+        var env = JSON.parse(msg.data);
+        if (env.payload && env.payload.seq !== undefined) {
+          hbSeq = env.payload.seq;
+          document.getElementById('hb-seq').textContent = hbSeq;
+        }
+      } catch (e) { /* malformed — ignore */ }
+      var now = new Date();
+      document.getElementById('hb-last-rx').textContent =
+        now.toTimeString().slice(0, 8);
+      var hbEl = document.getElementById('hb-status');
+      hbEl.textContent  = 'ALIVE';
+      hbEl.className    = 'hb-value ok';
+      log('Heartbeat RX seq=' + hbSeq, 'ok');
+    });
+
+    /* /lora_rx subscriber (raw debug) */
+    var loraSub = new ROSLIB.Topic({
+      ros: ros, name: '/lora_rx',
+      messageType: 'std_msgs/String'
+    });
+    loraSub.subscribe(function (msg) {
+      var el  = document.getElementById('lora-raw');
+      var now = new Date().toTimeString().slice(0, 8);
+      var line = '<span style="color:var(--border2)">' + now + '</span>  '
+               + escHtml(msg.data.slice(0, 140));
+      el.innerHTML = line + '<br>' + el.innerHTML;
+      /* Keep last 15 lines */
+      var lines = el.innerHTML.split('<br>');
+      if (lines.length > 15) {
+        el.innerHTML = lines.slice(0, 15).join('<br>');
+      }
+    });
+
+    /* Publishers */
+    pubs.cmdVel = new ROSLIB.Topic({
+      ros: ros, name: '/gait_command',
+      messageType: 'geometry_msgs/Twist'
+    });
+    pubs.bodyPose = new ROSLIB.Topic({
+      ros: ros, name: '/body_pose',
+      messageType: 'geometry_msgs/Vector3'
+    });
+    pubs.robotState = new ROSLIB.Topic({
+      ros: ros, name: '/robot_state',
+      messageType: 'std_msgs/String'
+    });
+  }
+
+  /* ── Heartbeat watchdog (UI side) ────────────────────────────── */
+  function startHbWatchdog() {
+    lastHbTime = Date.now(); /* grace period on connect */
+    hbTimeoutId = setInterval(function () {
+      if (!connected) return;
+      if (!lastHbTime) return;
+      var elapsed = (Date.now() - lastHbTime) / 1000;
+      var el = document.getElementById('hb-status');
+      if (elapsed > 30) {
+        el.textContent = 'TIMEOUT';
+        el.className   = 'hb-value danger';
+      } else if (elapsed > 10) {
+        el.textContent = 'SILENT ' + Math.round(elapsed) + 's';
+        el.className   = 'hb-value warn';
+      }
+    }, 2000);
+  }
+
+  function stopHbWatchdog() {
+    if (hbTimeoutId) { clearInterval(hbTimeoutId); hbTimeoutId = null; }
+    lastHbTime = null;
+    document.getElementById('hb-status').textContent = 'NO LINK';
+    document.getElementById('hb-status').className   = 'hb-value warn';
+    document.getElementById('hb-last-rx').textContent = '--';
+    document.getElementById('hb-seq').textContent     = '0';
+  }
+
+  /* ── Publish helpers ─────────────────────────────────────────── */
+  function sendCmdVel() {
+    if (!connected || !pubs.cmdVel) return;
+    pubs.cmdVel.publish(new ROSLIB.Message({
+      linear:  { x: vx,  y: vy,     z: 0 },
+      angular: { x: 0,   y: 0,      z: yawVel }
+    }));
+    flashDot('dot-gait-cmd', 500);
+    log('TX /gait_command  vx=' + vx.toFixed(2)
+        + '  vy=' + vy.toFixed(2)
+        + '  yaw=' + yawVel.toFixed(2));
+  }
+
+  function sendBodyPose() {
+    if (!connected || !pubs.bodyPose) return;
+    var DEG2RAD = Math.PI / 180;
+    var roll  = parseFloat(document.getElementById('roll-slider').value)  * DEG2RAD;
+    var pitch = parseFloat(document.getElementById('pitch-slider').value) * DEG2RAD;
+    var yaw   = parseFloat(document.getElementById('yaw-slider').value)   * DEG2RAD;
+    pubs.bodyPose.publish(new ROSLIB.Message({ x: roll, y: pitch, z: yaw }));
+    flashDot('dot-body-pose', 500);
+    log('TX /body_pose  roll=' + roll.toFixed(3)
+        + '  pitch=' + pitch.toFixed(3)
+        + '  yaw=' + yaw.toFixed(3));
+  }
+
+  function fireEstop() {
+    if (connected && pubs.robotState) {
+      pubs.robotState.publish(new ROSLIB.Message({ data: 'ESTOP' }));
+    }
+    log('!! E-STOP FIRED !!', 'err');
+  }
+
+  function clearEstop() {
+    if (connected && pubs.robotState) {
+      pubs.robotState.publish(new ROSLIB.Message({ data: 'SITTING' }));
+    }
+    log('Clearing E-Stop &rarr; SITTING', 'warn');
+  }
+
+  function zeroVel() {
+    vx = 0; vy = 0; yawVel = 0;
+    updateVelDisplay();
+    centerThumb('joy-xy-thumb',  80, 80);
+    centerThumb('joy-yaw-thumb', 100, 24);
+  }
+
+  function zeroPose() {
+    ['roll-slider', 'pitch-slider', 'yaw-slider'].forEach(function (id) {
+      document.getElementById(id).value = 0;
+    });
+    document.getElementById('roll-val').textContent     = '0°';
+    document.getElementById('pitch-val').textContent    = '0°';
+    document.getElementById('yaw-pose-val').textContent = '0°';
+  }
+
+  function updateVelDisplay() {
+    document.getElementById('vx-out').textContent  = vx.toFixed(2);
+    document.getElementById('vy-out').textContent  = vy.toFixed(2);
+    document.getElementById('yaw-out').textContent = yawVel.toFixed(2);
+  }
+
+  function centerThumb(id, left, top) {
+    var t = document.getElementById(id);
+    t.style.left = left + 'px';
+    t.style.top  = top  + 'px';
+  }
+
+  /* ── Joystick ────────────────────────────────────────────────── */
+  var activeJoy = null;
+
+  function startJoy(e, type) {
+    e.preventDefault();
+    activeJoy = type;
+    document.addEventListener('mousemove',  moveJoy);
+    document.addEventListener('mouseup',    endJoy);
+    document.addEventListener('touchmove',  moveJoy, { passive: false });
+    document.addEventListener('touchend',   endJoy);
+  }
+
+  function moveJoy(e) {
+    if (!activeJoy) return;
+    e.preventDefault();
+    var touch = e.touches ? e.touches[0] : e;
+
+    if (activeJoy === 'xy') {
+      var el   = document.getElementById('joy-xy');
+      var rect = el.getBoundingClientRect();
+      var cx   = rect.left + rect.width  / 2;
+      var cy   = rect.top  + rect.height / 2;
+      var r    = rect.width / 2 - 22;
+      var dx   = touch.clientX - cx;
+      var dy   = touch.clientY - cy;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > r) { dx = dx / dist * r; dy = dy / dist * r; }
+      var t = document.getElementById('joy-xy-thumb');
+      t.style.left = (rect.width  / 2 + dx) + 'px';
+      t.style.top  = (rect.height / 2 + dy) + 'px';
+      /* Forward = -Y on screen, strafe = -X */
+      vx = parseFloat((-dy / r).toFixed(2));
+      vy = parseFloat((-dx / r).toFixed(2));
+
+    } else if (activeJoy === 'yaw') {
+      var el   = document.getElementById('joy-yaw');
+      var rect = el.getBoundingClientRect();
+      var cx   = rect.left + rect.width / 2;
+      var r    = rect.width / 2 - 16;
+      var dx   = Math.max(-r, Math.min(r, touch.clientX - cx));
+      var t    = document.getElementById('joy-yaw-thumb');
+      t.style.left = (rect.width / 2 + dx) + 'px';
+      t.style.top  = '50%';
+      yawVel = parseFloat((-dx / r).toFixed(2));
+    }
+
+    updateVelDisplay();
+  }
+
+  function endJoy() {
+    activeJoy = null;
+    document.removeEventListener('mousemove',  moveJoy);
+    document.removeEventListener('mouseup',    endJoy);
+    document.removeEventListener('touchmove',  moveJoy);
+    document.removeEventListener('touchend',   endJoy);
+    vx = 0; vy = 0; yawVel = 0;
+    updateVelDisplay();
+    centerThumb('joy-xy-thumb',  80, 80);
+    centerThumb('joy-yaw-thumb', 100, 24);
+  }
+
+  /* ── Utility ─────────────────────────────────────────────────── */
+  function escHtml(str) {
+    return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  /* ── Init log ────────────────────────────────────────────────── */
+  log('Dashboard ready. Enter rosbridge URL and click Connect.', 'ok');
+</script>
+</body>
+</html>
