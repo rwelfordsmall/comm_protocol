@@ -94,7 +94,7 @@ class LoraReceiverNode(Node):
         super().__init__('lora_receiver')
 
         # ── Parameters ───────────────────────────────────────────────
-        self.declare_parameter('serial_port', '/dev/ttyUSB1')
+        self.declare_parameter('serial_port', '/dev/ttyUSB0')
         self.declare_parameter('baud_rate',   115200)
 
         port = self.get_parameter('serial_port').get_parameter_value().string_value
@@ -105,9 +105,9 @@ class LoraReceiverNode(Node):
         self._pub_raw = self.create_publisher(String, '/lora_rx', 10)
 
         # Whitelist publishers keyed by msg_type
-        self._lora_pubs = {}
+        self._publishers = {}
         for msg_type, (topic, ros_type) in _WHITELIST.items():
-            self._lora_pubs[msg_type] = self.create_publisher(ros_type, topic, 10)
+            self._publishers[msg_type] = self.create_publisher(ros_type, topic, 10)
             self.get_logger().info(f'Whitelisted [{msg_type}] → {topic}')
 
         # ── Serial ───────────────────────────────────────────────────
@@ -183,7 +183,7 @@ class LoraReceiverNode(Node):
                 f'Whitelisted types: {list(_WHITELIST.keys())}')
             return
 
-        publisher = self._lora_pubs[msg_type]
+        publisher = self._publishers[msg_type]
         payload   = envelope.get('payload', {})
 
         try:
