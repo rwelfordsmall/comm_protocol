@@ -29,6 +29,7 @@ setup(
             'heartbeat_node = comm_protocol.heartbeat_node:main',
             'joy_bridge_node = comm_protocol.joy_bridge_node:main',
             'goal_bridge_node = comm_protocol.goal_bridge_node:main',
+            'lora_bridge = comm_protocol.lora_bridge_node:main',
         ],
     },
 )
