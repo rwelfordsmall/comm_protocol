@@ -105,9 +105,9 @@ class LoraReceiverNode(Node):
         self._pub_raw = self.create_publisher(String, '/lora_rx', 10)
 
         # Whitelist publishers keyed by msg_type
-        self._publishers = {}
+        self._lora_pubs = {}
         for msg_type, (topic, ros_type) in _WHITELIST.items():
-            self._publishers[msg_type] = self.create_publisher(ros_type, topic, 10)
+            self._lora_pubs[msg_type] = self.create_publisher(ros_type, topic, 10)
             self.get_logger().info(f'Whitelisted [{msg_type}] → {topic}')
 
         # ── Serial ───────────────────────────────────────────────────
@@ -183,7 +183,7 @@ class LoraReceiverNode(Node):
                 f'Whitelisted types: {list(_WHITELIST.keys())}')
             return
 
-        publisher = self._publishers[msg_type]
+        publisher = self._lora_pubs[msg_type]
         payload   = envelope.get('payload', {})
 
         try:
