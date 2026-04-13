@@ -94,14 +94,14 @@ class LoraBridgeNode(Node):
             self.get_logger().error(f'Available ports: {ports}')
 
         # ── RX publishers ─────────────────────────────────────────────
-        self._pub_raw    = self.create_publisher(String, '/lora_rx', 10)
-        self._publishers = {}
+        self._pub_raw      = self.create_publisher(String, '/lora_rx', 10)
+        self._dispatch_pubs = {}
         for msg_type, (topic, ros_type) in _WHITELIST.items():
             # test_ping shares /lora_rx with _pub_raw — reuse rather than duplicate
             if msg_type == 'test_ping':
-                self._publishers[msg_type] = self._pub_raw
+                self._dispatch_pubs[msg_type] = self._pub_raw
             else:
-                self._publishers[msg_type] = self.create_publisher(ros_type, topic, 10)
+                self._dispatch_pubs[msg_type] = self.create_publisher(ros_type, topic, 10)
 
         # ── TX subscription ──────────────────────────────────────────
         self._sub = self.create_subscription(
@@ -180,7 +180,7 @@ class LoraBridgeNode(Node):
 
             ros_msg = self._build_message(msg_type, raw_text, payload)
             if ros_msg is not None:
-                self._publishers[msg_type].publish(ros_msg)
+                self._dispatch_pubs[msg_type].publish(ros_msg)
                 self.get_logger().info(f'RX dispatched [{msg_type}]')
 
             # test_ping: write ack back out over serial to the remote machine
