@@ -58,13 +58,19 @@ _WHITELIST = {
     'joy':         ('/joy_raw',      Joy),
     'goal_pose':   ('/goal_pose',    PoseStamped),
     'test_ping':   ('/lora_rx',      String),
+    'test_ack':  ('/lora_rx', String),   
 }
 
 # msg_types allowed on the TX path (/lora_tx_json → serial)
 _TX_WHITELIST = {
-    'heartbeat', 'cmd_vel', 'robot_state',
-    'body_pose', 'joy', 'goal_pose',
+    'heartbeat',
+    'cmd_vel',
+    'robot_state',
+    'body_pose',
+    'joy',
+    'goal_pose',
     'test_ping',
+    'test_ack',
 }
 
 
@@ -169,6 +175,10 @@ class LoraBridgeNode(Node):
                 envelope = json.loads(raw_text)
             except json.JSONDecodeError:
                 self.get_logger().warn(f'Non-JSON RX: {raw_text[:80]}')
+                continue
+
+            if envelope.get('sender') == self._sid:
+                self.get_logger().debug(f'Dropping self-echo [{envelope.get("msg_type")}]')
                 continue
 
             msg_type = envelope.get('msg_type', '')
